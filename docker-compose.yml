@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  gdbserver:
+    build:
+      context: ./
+      dockerfile: ./Dockerfile
+    image: http.io
+    security_opt:
+      - seccomp:unconfined
+    container_name: http.io
+    ports:
+      - "2222:22"
+      - "8080:8080"
+    volumes:
+      - .:/home/debugger/code
+    working_dir: /home/debugger/code
+    hostname: debug
