@@ -9,7 +9,7 @@ httpio_t *httpio_init();
 
 void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, httpio_request_handler handler);
 
-void httpio_listen(httpio_t *io, const char *ip, int port);
+int httpio_listen(httpio_t *io, const char *ip, int port);
 
 void httpio_destroy(httpio_t **io);
 

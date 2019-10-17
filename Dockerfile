@@ -5,7 +5,7 @@ FROM ubuntu:xenial
 ########################################################
 
 RUN apt-get update && apt-get upgrade -y && apt-get install -y \
-    apt-utils gcc g++ openssh-server cmake build-essential gdb gdbserver rsync vim
+    apt-utils gcc g++ openssh-server cmake build-essential gdb gdbserver rsync vim libtool m4 automake
 
 RUN mkdir /var/run/sshd
 RUN echo 'root:root' | chpasswd
@@ -27,7 +27,17 @@ RUN echo 'debugger:pwd' | chpasswd
 # Add custom packages and development environment here
 ########################################################
 
+# libevent
 RUN apt-get update && apt install libssl-dev libevent-dev -y
+
+# libuc
+RUN wget https://github.com/libuv/libuv/archive/v1.29.1.tar.gz && \
+    tar -xzvf v1.29.1.tar.gz && \
+    cd libuv-1.29.1/ && \
+    sh autogen.sh && \
+    ./configure && \
+    make \
+    make install
 
 ########################################################
 

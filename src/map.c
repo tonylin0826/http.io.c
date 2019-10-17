@@ -30,12 +30,12 @@ static unsigned map_hash(const char *str) {
 static map_node_t *map_newnode(const char *key, void *value, int vsize) {
     map_node_t *node;
     int ksize = strlen(key) + 1;
-    int voffset = ksize + ((sizeof(void*) - ksize) % sizeof(void*));
+    int voffset = ksize + ((sizeof(void *) - ksize) % sizeof(void *));
     node = malloc(sizeof(*node) + voffset + vsize);
     if (!node) return NULL;
     memcpy(node + 1, key, ksize);
     node->hash = map_hash(key);
-    node->value = ((char*) (node + 1)) + voffset;
+    node->value = ((char *) (node + 1)) + voffset;
     memcpy(node->value, value, vsize);
     return node;
 }
@@ -98,7 +98,7 @@ static map_node_t **map_getref(map_base_t *m, const char *key) {
     if (m->nbuckets > 0) {
         next = &m->buckets[map_bucketidx(m, hash)];
         while (*next) {
-            if ((*next)->hash == hash && !strcmp((char*) (*next + 1), key)) {
+            if ((*next)->hash == hash && !strcmp((char *) (*next + 1), key)) {
                 return next;
             }
             next = &(*next)->next;
@@ -189,5 +189,5 @@ const char *map_next_(map_base_t *m, map_iter_t *iter) {
             iter->node = m->buckets[iter->bucketidx];
         } while (iter->node == NULL);
     }
-    return (char*) (iter->node + 1);
+    return (char *) (iter->node + 1);
 }
