@@ -3,8 +3,11 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <uv.h>
+
+void on_write(uv_write_t *req, int status);
 
 void on_new_connection(uv_stream_t *server, int status);
 
@@ -90,6 +93,58 @@ http_parser_settings settings = {
         .on_body = on_body
 };
 
+void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t cb) {
+
+    list_t *current = tree->roots;
+
+    uri_tree_node_t *leaf = NULL;
+
+    int len = (int) strlen(uri);
+    char part[256] = {0};
+    for (int i = 0, c = 0; i < len && uri[i] != '?'; i++) {
+        if (uri[i] == '/') {
+            printf("part: [%s]\n", part);
+
+            list_node_t *node = search_in_list(current, part, is_node_match_part);
+
+            if (node) {
+                current = ((uri_tree_node_t *) node->data)->children;
+                leaf = ((uri_tree_node_t *) node->data);
+            } else {
+                leaf = new_uri_tree_node(strdup(part), NULL);
+                append_to_list(current, leaf);
+            }
+
+            memset(part, 0, c);
+            c = 0;
+        } else {
+            part[c++] = uri[i];
+        }
+    }
+
+    if (strlen(part) > 0) {
+        printf("part: [%s]\n", part);
+
+        list_node_t *node = search_in_list(current, part, is_node_match_part);
+
+        if (node) {
+            leaf = ((uri_tree_node_t *) node->data);
+        } else {
+            leaf = new_uri_tree_node(strdup(part), NULL);
+            append_to_list(current, leaf);
+        }
+    }
+
+    if (!leaf) {
+        printf("ERROR failed to parse URI");
+        return;
+    }
+
+    leaf->cb = cb;
+
+    printf("leaf => [%s]\n", leaf->name);
+}
+
 httpio_t *httpio_init() {
     httpio_t *io = calloc(1, sizeof(httpio_t));
 
@@ -103,11 +158,20 @@ httpio_t *httpio_init() {
 
     io->parser->data = (void *) &io->tmp;
 
+    for (int i = 0; i <= HTTP_TRACE; i++) {
+        io->uri_tree[i] = new_uri_tree();
+    }
+
     return io;
 }
 
-void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, httpio_request_handler handler) {
+void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, httpio_request_handler_t handler) {
 //    map_set(&io->request_handler_maps[method], uri, handler);
+    if (method > HTTP_TRACE) {
+        return;
+    }
+
+    parse_uri_path(io->uri_tree[method], uri, handler);
 }
 
 int httpio_listen(httpio_t *io, const char *ip, int port) {
@@ -130,9 +194,65 @@ int httpio_listen(httpio_t *io, const char *ip, int port) {
     return 0;
 }
 
+void httpio_init_response(httpio_response_t *response) {
+    response->status = HTTP_STATUS_OK;
+    map_init(&response->headers);
+}
+
+void httpio_deinit_response(httpio_response_t *response) {
+    map_deinit(&response->headers);
+}
+
+void uv_write_str(uv_stream_t *uv_client, char *str) {
+    uv_write_t *req = (uv_write_t *) malloc(sizeof(uv_write_t));
+    uv_buf_t wrbuf = uv_buf_init(str, strlen(str));
+    uv_write(req, uv_client, &wrbuf, 1, on_write);
+}
+
+void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *response) {
+    // convert response to text;
+    size_t content_len = 0;
+    if (response->body) {
+        content_len = strlen(response->body);
+    }
+
+    char buf[256] = {0};
+    sprintf(buf, "HTTP/1.1 %u %s\r\n", response->status, http_status_str(response->status));
+    uv_write_str(origin_request->uv_client, buf);
+
+    const char *key;
+    map_iter_t iter = map_iter(&response->headers);
+
+    while ((key = map_next(&response->headers, &iter))) {
+        sprintf(buf, "%s: %s\r\n", key, *map_get(&response->headers, key));
+        uv_write_str(origin_request->uv_client, buf);
+    }
+
+    if (map_get(&response->headers, "Date") == NULL) {
+        uv_write_str(origin_request->uv_client, "Date: Sat, 18 Feb 2017 00:01:57 GMT\r\n");
+    }
+
+    if (map_get(&response->headers, "Server") == NULL) {
+        sprintf(buf, "Server: nginx/1.11.8\r\n");
+        uv_write_str(origin_request->uv_client, "Server: httpio/0.0.1\r\n");
+    }
+
+    if (map_get(&response->headers, "Date") == NULL) {
+        sprintf(buf, "Content-Length: %zu\r\n", content_len);
+        uv_write_str(origin_request->uv_client, buf);
+    }
+
+    uv_write_str(origin_request->uv_client, "\r\n");
+
+//    sprintf(buf, "%s", response->body);
+    uv_write_str(origin_request->uv_client, response->body);
+
+}
+
 void httpio_destroy(httpio_t **io) {
 
 }
+
 
 void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     buf->base = (char *) malloc(suggested_size);
@@ -140,8 +260,35 @@ void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 }
 
 void route(uv_stream_t *client, httpio_request_t *request) {
+    httpio_t *io = (httpio_t *) client->data;
     printf("routing to %s - [%s]\n", http_method_str(request->method), request->uri);
+
+    if (request->method > HTTP_TRACE) {
+        printf("INVALID Method\n");
+        return;
+    }
+
+    uri_tree_node_t *node = search_uri_tree_node(io->uri_tree[request->method], request->uri);
+
+    if (!node) {
+        printf("PATH Not found\n");
+        return;
+    }
+
+    request->uv_client = client;
+
+    node->cb(request);
 }
+
+void on_write(uv_write_t *req, int status) {
+//    printf("on_write\n");
+    if (status) {
+        fprintf(stderr, "Write error %s\n", uv_strerror(status));
+    }
+
+    free(req);
+}
+
 
 void on_client_message(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
     if (nread < 0) {
@@ -159,7 +306,9 @@ void on_client_message(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) 
                 nread
         );
 
-        route(client, (httpio_request_t *) ((httpio_t *) client->data)->parser->data);
+        httpio_request_parse_t *parsed = (httpio_request_parse_t *) ((httpio_t *) client->data)->parser->data;
+
+        route(client, parsed->request);
 
         printf("n_parsed = %zu\n", n_parsed);
     }
@@ -187,8 +336,39 @@ void on_new_connection(uv_stream_t *server, int status) {
     }
 }
 
+void timeout(uv_timer_t *handle) {
+    httpio_request_t *req = (httpio_request_t *) handle->data;
+
+    httpio_response_t response;
+    httpio_init_response(&response);
+
+    httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
+
+    response.body = "{\"status\":\"ok\",\"extended\":true,\"results\":[{\"value\":0,\"type\":\"int64\"},{\"value\":1000,\"type\":\"decimal\"}]}";
+
+    httpio_write_response((httpio_request_t *) handle->data, &response);
+
+    httpio_deinit_response(&response);
+
+    free(req->uv_timer);
+    req->uv_timer = NULL;
+}
+
+void on_asd_sss(httpio_request_t *req) {
+    printf("on_asd_sss %s - [%s]\n", http_method_str(req->method), req->uri);
+
+    req->uv_timer = calloc(1, sizeof(uv_timer_t));
+
+    req->uv_timer->data = req;
+
+    uv_timer_init(uv_default_loop(), req->uv_timer);
+    uv_timer_start(req->uv_timer, timeout, 0, 0);
+};
+
 int main() {
     httpio_t *io = httpio_init();
+
+    httpio_add_route(io, HTTP_GET, "/asb/sss", on_asd_sss);
 
     httpio_listen(io, "0.0.0.0", 8080);
 
