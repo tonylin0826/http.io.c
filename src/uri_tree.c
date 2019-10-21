@@ -19,10 +19,13 @@ uri_tree_node_t *new_uri_tree_node(char *name, httpio_request_handler_t cb) {
     n->name = name;
 }
 
-
 bool is_node_match_part(void *node, void *uri_part) {
     uri_tree_node_t *n = (uri_tree_node_t *) node;
     char *u = (char *) uri_part;
+
+    if (n->name[0] == ':') {
+        return true;
+    }
 
     return strcmp(n->name, u) == 0;
 }
@@ -34,7 +37,7 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri) {
 
     int len = (int) strlen(uri);
     char part[256] = {0};
-    for (int i = 0, c = 0; i < len && uri[i] != '?'; i++) {
+    for (int i = 1, c = 0; i < len && uri[i] != '?'; i++) {
         if (uri[i] == '/') {
             printf("part: [%s]\n", part);
 
@@ -48,6 +51,8 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri) {
 
             memset(part, 0, c);
             c = 0;
+
+            current = leaf->children;
         } else {
             part[c++] = uri[i];
         }

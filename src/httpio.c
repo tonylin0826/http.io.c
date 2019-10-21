@@ -3,21 +3,128 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
 #include <stdlib.h>
 #include <uv.h>
+
+typedef struct {
+    httpio_timeout_cb_t cb;
+    void *data;
+} timeout_t;
+
+void parse_url_query_params(httpio_request_t *request, char *uri, size_t len) {
+    int uri_len = (int) len;
+    bool start = false;
+
+    char *key = NULL;
+    char *value = NULL;
+
+    size_t key_len = 0;
+    size_t value_len = 0;
+
+    char **finger = NULL;
+    size_t *finger_len = 0;
+
+    for (int i = 0; i < uri_len; i++) {
+        if (uri[i] == '?') {
+            start = true;
+
+            finger = &key;
+            finger_len = &key_len;
+
+            continue;
+        }
+
+        if (start) {
+
+            if (uri[i] == ';' || uri[i] == '&') {
+
+                if (key && value) {
+                    char *k = strndup(key, key_len);
+                    map_set(&request->queries, k, strndup(value, value_len));
+                    free(k);
+                }
+
+                key = NULL;
+                value = NULL;
+
+                key_len = 0;
+                value_len = 0;
+
+                finger = &key;
+                finger_len = &key_len;
+
+                continue;
+            }
+
+            if (uri[i] == '=') {
+                finger = &value;
+                finger_len = &value_len;
+                continue;
+            }
+
+            if (*finger == NULL) {
+                *finger = &uri[i];
+                *finger_len = 1;
+                continue;
+            }
+
+            (*finger_len)++;
+        }
+    }
+
+    if (key && value) {
+        char *k = strndup(key, key_len);
+        map_set(&request->queries, k, strndup(value, value_len));
+        free(k);
+    }
+}
+
+void on_method_not_allowed(httpio_request_t *req) {
+    httpio_response_t response;
+    httpio_init_response(&response);
+
+    httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
+
+    response.body = "{\"message\": \"Method not allowed\"}";
+    response.status = HTTP_STATUS_METHOD_NOT_ALLOWED;
+
+    httpio_write_response(req, &response);
+    httpio_deinit_response(&response);
+
+    httpio_free_request(&req);
+}
+
+void on_not_found(httpio_request_t *req) {
+    httpio_response_t response;
+    httpio_init_response(&response);
+
+    httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
+
+    response.body = "{\"message\": \"URL not found\"}";
+    response.status = HTTP_STATUS_NOT_FOUND;
+
+    httpio_write_response(req, &response);
+    httpio_deinit_response(&response);
+
+    httpio_free_request(&req);
+}
 
 void on_write(uv_write_t *req, int status);
 
 void on_new_connection(uv_stream_t *server, int status);
 
+void route(uv_stream_t *client, httpio_request_t *request);
+
 int on_message_begin(http_parser *parser) {
     printf("on_message_begin\n");
-    httpio_request_parse_t *parsed = (httpio_request_parse_t *) parser->data;
+    httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
-    parsed->request = calloc(1, sizeof(httpio_request_t));
+    info->request = calloc(1, sizeof(httpio_request_t));
+    info->last_header_field = NULL;
 
-    map_init(&(parsed->request->headers));
+    map_init(&(info->request->headers));
+    map_init(&(info->request->queries));
+    map_init(&(info->request->params));
 
     return 0;
 }
@@ -25,61 +132,83 @@ int on_message_begin(http_parser *parser) {
 int on_message_complete(http_parser *parser) {
     printf("on_message_complete\n");
 
-    httpio_request_parse_t *parsed = (httpio_request_parse_t *) parser->data;
+    httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
-    parsed->request->method = parser->method;
+    info->request->method = parser->method;
 
-    printf("%s - %s\n", http_method_str(parser->method), parsed->request->uri);
+    printf("%s - %s\n", http_method_str(parser->method), info->request->uri);
     const char *key = NULL;
-    map_iter_t iter = map_iter(&parsed.request->headers);
+    map_iter_t iter = map_iter(&info.request->headers);
 
-    while ((key = map_next(&parsed->request->headers, &iter))) {
-        char **s = map_get(&parsed->request->headers, key);
+    while ((key = map_next(&info->request->headers, &iter))) {
+        char **s = map_get(&info->request->headers, key);
         printf("%s: %s\n", key, *s);
     }
 
-    printf("%s\n", parsed->request->body);
+    iter = map_iter(&info.request->headers);
+
+    while ((key = map_next(&info->request->queries, &iter))) {
+        char **s = map_get(&info->request->queries, key);
+        printf("%s => %s\n", key, *s);
+    }
+
+    printf("%s\n", info->request->body);
+
+    route(info->client, info->request);
 
     return 0;
 }
 
 int on_body(http_parser *parser, const char *at, size_t len) {
-    httpio_request_parse_t *parsed = (httpio_request_parse_t *) parser->data;
+//    printf("on_body\n");
+    httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
-//    printf("body = [%.*s]\n", (int) len, at);
+    strncat(info->request->tmp_body_finger, at, len);
 
-    parsed->request->body = strndup(at, len);
+    info->request->tmp_body_finger += len;
+//    strncat(info->request->body, at, len);
+
     return 0;
 }
 
 int on_header_value(http_parser *parser, const char *at, size_t len) {
-    httpio_request_parse_t *parsed = (httpio_request_parse_t *) parser->data;
+    httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
 //    printf("header value = [%.*s], %zu\n", (int) len, at, len);
 
-    if (parsed->last_header_field != NULL) {
-        map_set(&parsed->request->headers, parsed->last_header_field, strndup(at, len));
-        parsed->last_header_field = NULL;
+    if (info->last_header_field != NULL) {
+
+        char *value = strndup(at, len);
+
+        if (strncmp(info->last_header_field, "Content-Length", 14) == 0) {
+            uint64_t content_len = strtoul(value, NULL, 10);
+            info->request->body = calloc(content_len, sizeof(char));
+            info->request->tmp_body_finger = info->request->body;
+        }
+
+        map_set(&info->request->headers, info->last_header_field, value);
+        info->last_header_field = NULL;
     }
 
     return 0;
 }
 
 int on_header_field(http_parser *parser, const char *at, size_t len) {
-    httpio_request_parse_t *parsed = (httpio_request_parse_t *) parser->data;
+    httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
 //    printf("header field = [%.*s]\n", (int) len, at);
 
-    parsed->last_header_field = strndup(at, len);
+    info->last_header_field = strndup(at, len);
     return 0;
 }
 
 int on_url(http_parser *parser, const char *at, size_t len) {
-    httpio_request_parse_t *parsed = (httpio_request_parse_t *) parser->data;
+    httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
-//    printf("url = [%.*s]\n", (int) len, at);
+    info->request->uri = strndup(at, len);
 
-    parsed->request->uri = strndup(at, len);
+    // parse url
+    parse_url_query_params(info->request, info->request->uri, len);
 
     return 0;
 }
@@ -93,6 +222,12 @@ http_parser_settings settings = {
         .on_body = on_body
 };
 
+void uv_write_str(uv_stream_t *uv_client, char *str) {
+    uv_write_t *req = (uv_write_t *) malloc(sizeof(uv_write_t));
+    uv_buf_t wrbuf = uv_buf_init(str, strlen(str));
+    uv_write(req, uv_client, &wrbuf, 1, on_write);
+}
+
 void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t cb) {
 
     list_t *current = tree->roots;
@@ -101,37 +236,47 @@ void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t 
 
     int len = (int) strlen(uri);
     char part[256] = {0};
-    for (int i = 0, c = 0; i < len && uri[i] != '?'; i++) {
+    for (int i = 1, c = 0; i < len && uri[i] != '?'; i++) {
         if (uri[i] == '/') {
-            printf("part: [%s]\n", part);
-
             list_node_t *node = search_in_list(current, part, is_node_match_part);
+
+//            printf("%p => %s\n", node, part);
 
             if (node) {
                 current = ((uri_tree_node_t *) node->data)->children;
                 leaf = ((uri_tree_node_t *) node->data);
+
+                printf("found %s\n", leaf->name);
             } else {
                 leaf = new_uri_tree_node(strdup(part), NULL);
                 append_to_list(current, leaf);
+
+                printf("create %s\n", leaf->name);
             }
 
             memset(part, 0, c);
             c = 0;
+
+            current = leaf->children;
         } else {
             part[c++] = uri[i];
         }
     }
 
-    if (strlen(part) > 0) {
-        printf("part: [%s]\n", part);
+    if (part[0] != 0) {
 
         list_node_t *node = search_in_list(current, part, is_node_match_part);
+//        printf("%p => %s\n", node, part);
 
         if (node) {
             leaf = ((uri_tree_node_t *) node->data);
+
+            printf("found %s\n", leaf->name);
         } else {
             leaf = new_uri_tree_node(strdup(part), NULL);
             append_to_list(current, leaf);
+
+            printf("create %s\n", leaf->name);
         }
     }
 
@@ -141,22 +286,22 @@ void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t 
     }
 
     leaf->cb = cb;
+}
 
-    printf("leaf => [%s]\n", leaf->name);
+void timeout(uv_timer_t *handle) {
+
+    timeout_t *t = (timeout_t *) handle->data;
+
+    t->cb(t->data);
+
+    free(t);
+    free(handle);
 }
 
 httpio_t *httpio_init() {
     httpio_t *io = calloc(1, sizeof(httpio_t));
 
     uv_tcp_init(uv_default_loop(), &io->uv_server);
-
-    io->tmp.request = NULL;
-    io->tmp.last_header_field = NULL;
-
-    io->parser = malloc(sizeof(http_parser));
-    http_parser_init(io->parser, HTTP_REQUEST);
-
-    io->parser->data = (void *) &io->tmp;
 
     for (int i = 0; i <= HTTP_TRACE; i++) {
         io->uri_tree[i] = new_uri_tree();
@@ -203,10 +348,54 @@ void httpio_deinit_response(httpio_response_t *response) {
     map_deinit(&response->headers);
 }
 
-void uv_write_str(uv_stream_t *uv_client, char *str) {
-    uv_write_t *req = (uv_write_t *) malloc(sizeof(uv_write_t));
-    uv_buf_t wrbuf = uv_buf_init(str, strlen(str));
-    uv_write(req, uv_client, &wrbuf, 1, on_write);
+void httpio_set_timout(uint64_t time_in_millisecond, void *data, httpio_timeout_cb_t cb) {
+    uv_timer_t *uv_timer = calloc(1, sizeof(uv_timer_t));
+
+    timeout_t *t = calloc(1, sizeof(timeout_t));
+    t->data = data;
+    t->cb = cb;
+
+    uv_timer->data = t;
+
+    uv_timer_init(uv_default_loop(), uv_timer);
+    uv_timer_start(uv_timer, timeout, time_in_millisecond, 0);
+}
+
+void httpio_free_request(httpio_request_t **req) {
+    free((*req)->uri);
+    free((*req)->body);
+
+    const char *key;
+    map_iter_t iter = map_iter(&(*req)->headers);
+
+    while ((key = map_next(&(*req)->headers, &iter))) {
+        free(*map_get(&(*req)->headers, key));
+    }
+
+    map_deinit(&(*req)->headers);
+
+    (*req)->uv_client = NULL;
+
+    free(*req);
+
+    *req = NULL;
+}
+
+void httpio_free_client_info(httpio_client_info_t **info_to_free) {
+    httpio_client_info_t *info = *info_to_free;
+
+    free(info->last_header_field);
+
+    if (info->request) {
+        httpio_free_request(&info->request);
+    }
+
+    free(info->client);
+    free(info->parser);
+
+    // no need to free io since destroy free it
+
+    free(info);
 }
 
 void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *response) {
@@ -244,15 +433,17 @@ void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *
 
     uv_write_str(origin_request->uv_client, "\r\n");
 
-//    sprintf(buf, "%s", response->body);
     uv_write_str(origin_request->uv_client, response->body);
 
 }
 
-void httpio_destroy(httpio_t **io) {
+void httpio_destroy(httpio_t **io_to_free) {
+    httpio_t *io = *io_to_free;
 
+    uv_close((uv_handle_t *) &io->uv_server, NULL);
+
+    free(io);
 }
-
 
 void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
     buf->base = (char *) malloc(suggested_size);
@@ -260,11 +451,15 @@ void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 }
 
 void route(uv_stream_t *client, httpio_request_t *request) {
-    httpio_t *io = (httpio_t *) client->data;
+    httpio_client_info_t *info = (httpio_client_info_t *) client->data;
+    httpio_t *io = (httpio_t *) info->data;
     printf("routing to %s - [%s]\n", http_method_str(request->method), request->uri);
+
+    request->uv_client = client;
 
     if (request->method > HTTP_TRACE) {
         printf("INVALID Method\n");
+        on_method_not_allowed(request);
         return;
     }
 
@@ -272,16 +467,14 @@ void route(uv_stream_t *client, httpio_request_t *request) {
 
     if (!node) {
         printf("PATH Not found\n");
+        on_not_found(request);
         return;
     }
-
-    request->uv_client = client;
 
     node->cb(request);
 }
 
 void on_write(uv_write_t *req, int status) {
-//    printf("on_write\n");
     if (status) {
         fprintf(stderr, "Write error %s\n", uv_strerror(status));
     }
@@ -289,28 +482,36 @@ void on_write(uv_write_t *req, int status) {
     free(req);
 }
 
-
 void on_client_message(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
+    httpio_client_info_t *info = (httpio_client_info_t *) client->data;
     if (nread < 0) {
         if (nread != UV_EOF) {
+
             fprintf(stderr, "Read error %s\n", uv_err_name(nread));
             uv_close((uv_handle_t *) client, NULL);
+
+            if (info) {
+                httpio_free_client_info(&info);
+            }
         }
     } else if (nread > 0) {
 //        printf("read %.*s, %zu\n", (int) nread, buf->base, nread);
 
+        if (!info->parser) {
+            info->parser = calloc(1, sizeof(http_parser));
+            http_parser_init(info->parser, HTTP_REQUEST);
+
+            info->parser->data = info;
+        }
+
         size_t n_parsed = http_parser_execute(
-                ((httpio_t *) client->data)->parser,
+                info->parser,
                 &settings,
                 buf->base,
                 nread
         );
 
-        httpio_request_parse_t *parsed = (httpio_request_parse_t *) ((httpio_t *) client->data)->parser->data;
-
-        route(client, parsed->request);
-
-        printf("n_parsed = %zu\n", n_parsed);
+//        printf("n_parsed = %zu\n", n_parsed);
     }
 
     if (buf->base) {
@@ -327,52 +528,18 @@ void on_new_connection(uv_stream_t *server, int status) {
     uv_tcp_t *client = (uv_tcp_t *) malloc(sizeof(uv_tcp_t));
     uv_tcp_init(uv_default_loop(), client);
 
-    client->data = server->data;
+    httpio_client_info_t *info = calloc(1, sizeof(httpio_client_info_t));
+
+    info->data = server->data;
+    info->client = (uv_stream_t *) client;
+    info->parser = NULL;
+    client->data = info;
 
     if (uv_accept(server, (uv_stream_t *) client) == 0) {
         uv_read_start((uv_stream_t *) client, alloc_buffer, on_client_message);
     } else {
+        // free client info in callback
         uv_close((uv_handle_t *) client, NULL);
+        httpio_free_client_info(&info);
     }
-}
-
-void timeout(uv_timer_t *handle) {
-    httpio_request_t *req = (httpio_request_t *) handle->data;
-
-    httpio_response_t response;
-    httpio_init_response(&response);
-
-    httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
-
-    response.body = "{\"status\":\"ok\",\"extended\":true,\"results\":[{\"value\":0,\"type\":\"int64\"},{\"value\":1000,\"type\":\"decimal\"}]}";
-
-    httpio_write_response((httpio_request_t *) handle->data, &response);
-
-    httpio_deinit_response(&response);
-
-    free(req->uv_timer);
-    req->uv_timer = NULL;
-}
-
-void on_asd_sss(httpio_request_t *req) {
-    printf("on_asd_sss %s - [%s]\n", http_method_str(req->method), req->uri);
-
-    req->uv_timer = calloc(1, sizeof(uv_timer_t));
-
-    req->uv_timer->data = req;
-
-    uv_timer_init(uv_default_loop(), req->uv_timer);
-    uv_timer_start(req->uv_timer, timeout, 0, 0);
-};
-
-int main() {
-    httpio_t *io = httpio_init();
-
-    httpio_add_route(io, HTTP_GET, "/asb/sss", on_asd_sss);
-
-    httpio_listen(io, "0.0.0.0", 8080);
-
-    httpio_destroy(&io);
-
-    return 0;
 }
