@@ -26,6 +26,10 @@ void on_asd_sss(httpio_request_t *req) {
 void on_uri_param(httpio_request_t *req) {
     printf("on_uri_param %s - [%s]\n", http_method_str(req->method), req->uri);
 
+    char *s = *map_get(&req->params, ":ss");
+
+    printf(":ss => %s\n", s);
+
     httpio_set_timout(0, req, on_asd_sss_timeout);
 }
 

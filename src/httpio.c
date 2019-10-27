@@ -373,6 +373,8 @@ void httpio_free_request(httpio_request_t **req) {
     }
 
     map_deinit(&(*req)->headers);
+    map_deinit(&(*req)->params);
+    map_deinit(&(*req)->queries);
 
     (*req)->uv_client = NULL;
 
@@ -463,7 +465,7 @@ void route(uv_stream_t *client, httpio_request_t *request) {
         return;
     }
 
-    uri_tree_node_t *node = search_uri_tree_node(io->uri_tree[request->method], request->uri);
+    uri_tree_node_t *node = search_uri_tree_node(io->uri_tree[request->method], request->uri, request);
 
     if (!node) {
         printf("PATH Not found\n");

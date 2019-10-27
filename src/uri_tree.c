@@ -30,7 +30,7 @@ bool is_node_match_part(void *node, void *uri_part) {
     return strcmp(n->name, u) == 0;
 }
 
-uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri) {
+uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_request_t *req) {
     list_t *current = tree->roots;
 
     uri_tree_node_t *leaf = NULL;
@@ -48,6 +48,8 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri) {
             }
 
             leaf = (uri_tree_node_t *) node->data;
+
+            map_set(&req->params, leaf->name, strdup(part));
 
             memset(part, 0, c);
             c = 0;
