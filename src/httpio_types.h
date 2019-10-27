@@ -9,6 +9,7 @@
 #include "http_parser.h"
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <uv.h>
 
 typedef map_str_t httpio_header_t;
@@ -32,6 +33,7 @@ typedef struct {
     uv_timer_t *uv_timer;
 
     char *tmp_body_finger;
+    void *data;
 } httpio_request_t;
 
 typedef struct {

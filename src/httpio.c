@@ -121,6 +121,7 @@ int on_message_begin(http_parser *parser) {
 
     info->request = calloc(1, sizeof(httpio_request_t));
     info->last_header_field = NULL;
+    info->request->tmp_body_finger = NULL;
 
     map_init(&(info->request->headers));
     map_init(&(info->request->queries));
@@ -152,7 +153,9 @@ int on_message_complete(http_parser *parser) {
         printf("%s => %s\n", key, *s);
     }
 
-    printf("%s\n", info->request->body);
+    if (info->request->body) {
+        printf("%s\n", info->request->body);
+    }
 
     route(info->client, info->request);
 
@@ -160,13 +163,14 @@ int on_message_complete(http_parser *parser) {
 }
 
 int on_body(http_parser *parser, const char *at, size_t len) {
-//    printf("on_body\n");
     httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
-    strncat(info->request->tmp_body_finger, at, len);
+    if (!info->request->tmp_body_finger) {
+        return 0;
+    }
 
+    strncat(info->request->tmp_body_finger, at, len);
     info->request->tmp_body_finger += len;
-//    strncat(info->request->body, at, len);
 
     return 0;
 }
