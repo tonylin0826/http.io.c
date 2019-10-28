@@ -41,10 +41,6 @@ typedef struct {
 #define map_get(m, key)\
   ( (m)->ref = map_get_(&(m)->base, key) )
 
-#define map_str_set(m, key, value)\
-  ( (m)->tmp = (value),\
-    map_set_(&(m)->base, key, &(m)->tmp, strlen((m)->tmp) + 1) )
-
 
 #define map_set(m, key, value)\
   ( (m)->tmp = (value),\
@@ -64,15 +60,10 @@ typedef struct {
 
 
 void map_deinit_(map_base_t *m);
-
 void *map_get_(map_base_t *m, const char *key);
-
 int map_set_(map_base_t *m, const char *key, void *value, int vsize);
-
 void map_remove_(map_base_t *m, const char *key);
-
 map_iter_t map_iter_(void);
-
 const char *map_next_(map_base_t *m, map_iter_t *iter);
 
 

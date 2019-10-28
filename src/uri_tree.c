@@ -39,7 +39,7 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_
     char part[256] = {0};
     for (int i = 1, c = 0; i < len && uri[i] != '?'; i++) {
         if (uri[i] == '/') {
-            printf("part: [%s]\n", part);
+//            printf("part: [%s]\n", part);
 
             list_node_t *node = search_in_list(current, part, is_node_match_part);
 
@@ -61,7 +61,7 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_
     }
 
     if (strlen(part) > 0) {
-        printf("part: [%s]\n", part);
+//        printf("part: [%s]\n", part);
 
         list_node_t *node = search_in_list(current, part, is_node_match_part);
 

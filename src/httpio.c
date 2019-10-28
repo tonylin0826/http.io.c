@@ -116,7 +116,7 @@ void on_new_connection(uv_stream_t *server, int status);
 void route(uv_stream_t *client, httpio_request_t *request);
 
 int on_message_begin(http_parser *parser) {
-    printf("on_message_begin\n");
+//    printf("on_message_begin\n");
     httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
     info->request = calloc(1, sizeof(httpio_request_t));
@@ -131,31 +131,31 @@ int on_message_begin(http_parser *parser) {
 }
 
 int on_message_complete(http_parser *parser) {
-    printf("on_message_complete\n");
+//    printf("on_message_complete\n");
 
     httpio_client_info_t *info = (httpio_client_info_t *) parser->data;
 
     info->request->method = parser->method;
 
-    printf("%s - %s\n", http_method_str(parser->method), info->request->uri);
-    const char *key = NULL;
-    map_iter_t iter = map_iter(&info.request->headers);
-
-    while ((key = map_next(&info->request->headers, &iter))) {
-        char **s = map_get(&info->request->headers, key);
-        printf("%s: %s\n", key, *s);
-    }
-
-    iter = map_iter(&info.request->headers);
-
-    while ((key = map_next(&info->request->queries, &iter))) {
-        char **s = map_get(&info->request->queries, key);
-        printf("%s => %s\n", key, *s);
-    }
-
-    if (info->request->body) {
-        printf("%s\n", info->request->body);
-    }
+//    printf("%s - %s\n", http_method_str(parser->method), info->request->uri);
+//    const char *key = NULL;
+//    map_iter_t iter = map_iter(&info.request->headers);
+//
+//    while ((key = map_next(&info->request->headers, &iter))) {
+//        char **s = map_get(&info->request->headers, key);
+//        printf("%s: %s\n", key, *s);
+//    }
+//
+//    iter = map_iter(&info.request->headers);
+//
+//    while ((key = map_next(&info->request->queries, &iter))) {
+//        char **s = map_get(&info->request->queries, key);
+//        printf("%s => %s\n", key, *s);
+//    }
+//
+//    if (info->request->body) {
+//        printf("%s\n", info->request->body);
+//    }
 
     route(info->client, info->request);
 
@@ -190,7 +190,10 @@ int on_header_value(http_parser *parser, const char *at, size_t len) {
             info->request->tmp_body_finger = info->request->body;
         }
 
-        map_set(&info->request->headers, info->last_header_field, value);
+        int rc = map_set(&info->request->headers, info->last_header_field, value);
+
+//        printf("[%s] ====> [%s], %d\n", info->last_header_field, value, rc);
+        free(info->last_header_field);
         info->last_header_field = NULL;
     }
 
@@ -250,12 +253,12 @@ void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t 
                 current = ((uri_tree_node_t *) node->data)->children;
                 leaf = ((uri_tree_node_t *) node->data);
 
-                printf("found %s\n", leaf->name);
+//                printf("found %s\n", leaf->name);
             } else {
                 leaf = new_uri_tree_node(strdup(part), NULL);
                 append_to_list(current, leaf);
 
-                printf("create %s\n", leaf->name);
+//                printf("create %s\n", leaf->name);
             }
 
             memset(part, 0, c);
@@ -275,12 +278,12 @@ void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t 
         if (node) {
             leaf = ((uri_tree_node_t *) node->data);
 
-            printf("found %s\n", leaf->name);
+//            printf("found %s\n", leaf->name);
         } else {
             leaf = new_uri_tree_node(strdup(part), NULL);
             append_to_list(current, leaf);
 
-            printf("create %s\n", leaf->name);
+//            printf("create %s\n", leaf->name);
         }
     }
 
@@ -299,7 +302,8 @@ void timeout(uv_timer_t *handle) {
     t->cb(t->data);
 
     free(t);
-    free(handle);
+
+    uv_close((uv_handle_t *) handle, (uv_close_cb) free);
 }
 
 httpio_t *httpio_init() {
@@ -376,13 +380,25 @@ void httpio_free_request(httpio_request_t **req) {
         free(*map_get(&(*req)->headers, key));
     }
 
-    map_deinit(&(*req)->headers);
+    iter = map_iter(&(*req)->params);
+
+    while ((key = map_next(&(*req)->params, &iter))) {
+        free(*map_get(&(*req)->params, key));
+    }
+
+    iter = map_iter(&(*req)->queries);
+
+    while ((key = map_next(&(*req)->queries, &iter))) {
+        free(*map_get(&(*req)->queries, key));
+    }
+
+    map_deinit(&((*req)->headers));
     map_deinit(&(*req)->params);
     map_deinit(&(*req)->queries);
 
     (*req)->uv_client = NULL;
 
-    free(*req);
+    free((*req));
 
     *req = NULL;
 }
@@ -391,16 +407,15 @@ void httpio_free_client_info(httpio_client_info_t **info_to_free) {
     httpio_client_info_t *info = *info_to_free;
 
     free(info->last_header_field);
+    info->last_header_field = NULL;
 
     if (info->request) {
         httpio_free_request(&info->request);
     }
 
-    free(info->client);
     free(info->parser);
 
     // no need to free io since destroy free it
-
     free(info);
 }
 
@@ -428,7 +443,7 @@ void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *
     }
 
     if (map_get(&response->headers, "Server") == NULL) {
-        sprintf(buf, "Server: nginx/1.11.8\r\n");
+        sprintf(buf, "Server: httpio/0.0.1\r\n");
         uv_write_str(origin_request->uv_client, "Server: httpio/0.0.1\r\n");
     }
 
@@ -446,7 +461,7 @@ void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *
 void httpio_destroy(httpio_t **io_to_free) {
     httpio_t *io = *io_to_free;
 
-    uv_close((uv_handle_t *) &io->uv_server, NULL);
+    uv_close((uv_handle_t *) &io->uv_server, (uv_close_cb) free);
 
     free(io);
 }
@@ -459,7 +474,7 @@ void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 void route(uv_stream_t *client, httpio_request_t *request) {
     httpio_client_info_t *info = (httpio_client_info_t *) client->data;
     httpio_t *io = (httpio_t *) info->data;
-    printf("routing to %s - [%s]\n", http_method_str(request->method), request->uri);
+//    printf("routing to %s - [%s]\n", http_method_str(request->method), request->uri);
 
     request->uv_client = client;
 
@@ -494,7 +509,7 @@ void on_client_message(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) 
         if (nread != UV_EOF) {
 
             fprintf(stderr, "Read error %s\n", uv_err_name(nread));
-            uv_close((uv_handle_t *) client, NULL);
+            uv_close((uv_handle_t *) client, (uv_close_cb) free);
 
             if (info) {
                 httpio_free_client_info(&info);
@@ -545,7 +560,7 @@ void on_new_connection(uv_stream_t *server, int status) {
         uv_read_start((uv_stream_t *) client, alloc_buffer, on_client_message);
     } else {
         // free client info in callback
-        uv_close((uv_handle_t *) client, NULL);
+        uv_close((uv_handle_t *) client, (uv_close_cb) free);
         httpio_free_client_info(&info);
     }
 }

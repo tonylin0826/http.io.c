@@ -7,37 +7,60 @@
 #include <uv.h>
 #include "../src/httpio.h"
 
-list_t *g_list;
+typedef map_t(httpio_request_t*) http_request_map_t;
+
+http_request_map_t request_map;
 
 char *pub_data = NULL;
 
 void on_sub_get_timeout(uv_timer_t *handle) {
     httpio_request_t *req = (httpio_request_t *) handle->data;
 
+    char addr[12] = {0};
+    sprintf(addr, "%p", req);
+    map_remove(&request_map, addr);
+
     httpio_response_t response;
     httpio_init_response(&response);
 
     httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
+    httpio_header_set(&response.headers, "Access-Control-Allow-Origin", "*");
 
-    if (!pub_data) {
-        response.body = "[]";
-    } else {
-        response.body = pub_data;
-    }
+    response.body = strdup("[]");
 
     httpio_write_response(req, &response);
     httpio_deinit_response(&response);
 
     httpio_free_request(&req);
 
-    uv_timer_stop(handle);
-    free(handle);
+    uv_close((uv_handle_t *) handle, (uv_close_cb) free);
+}
+
+void on_pub(httpio_request_t *req) {
+
+    httpio_response_t response;
+    httpio_init_response(&response);
+
+    httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
+    httpio_header_set(&response.headers, "Access-Control-Allow-Origin", "*");
+
+    response.body = pub_data;
+
+    httpio_write_response(req, &response);
+    httpio_deinit_response(&response);
+
+    uv_timer_stop(req->data);
+    uv_close((uv_handle_t *) req->data, (uv_close_cb) free);
+
+    httpio_free_request(&req);
 }
 
 void on_sub_get(httpio_request_t *req) {
-    printf("on_sub_get %s - [%s]\n", http_method_str(req->method), req->uri);
+    printf("on_sub_get %s - [%s], [%p]\n", http_method_str(req->method), req->uri, req);
 
-    append_to_list(g_list, req);
+    char addr[12] = {0};
+    sprintf(addr, "%p", req);
+    map_set(&request_map,addr,req);
 
     uv_timer_t *uv_timer = calloc(1, sizeof(uv_timer_t));
 
@@ -49,7 +72,7 @@ void on_sub_get(httpio_request_t *req) {
 }
 
 void on_pub_post(httpio_request_t *req) {
-    printf("on_data2_get %s - [%s]\n", http_method_str(req->method), req->uri);
+    printf("on_pub_post %s - [%s]\n", http_method_str(req->method), req->uri);
 
     pub_data = strdup(req->body);
 
@@ -58,32 +81,30 @@ void on_pub_post(httpio_request_t *req) {
 
     httpio_header_set(&response.headers, "Content-Type", "application/json; charset=utf-8");
 
-    response.body = "[30]";
+    response.body = "{\"success\": true}";
 
     httpio_write_response(req, &response);
     httpio_deinit_response(&response);
 
     httpio_free_request(&req);
 
+    const char *key = NULL;
+    map_iter_t iter = map_iter(&request_map);
 
-    list_node_t *t = NULL;
-    list_node_t *c = g_list->head;
-    while (c) {
-        on_sub_get_timeout(((httpio_request_t *) c->data)->data);
-        t = c;
-        c = c->next;
-        free(t);
+    while ((key = map_next(&request_map, &iter))) {
+        httpio_request_t **r = map_get(&request_map, key);
+        on_pub(*r);
     }
 
-    g_list->head = NULL;
-    g_list->current = NULL;
+    map_deinit(&request_map);
+    map_init(&request_map);
 
     free(pub_data);
+    pub_data = NULL;
 }
 
 int main() {
-
-    g_list = new_list();
+    map_init(&request_map);
 
     httpio_t *io = httpio_init();
 
@@ -93,4 +114,6 @@ int main() {
     httpio_listen(io, "0.0.0.0", 8080);
 
     httpio_destroy(&io);
+
+    return 0;
 }
