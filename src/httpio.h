@@ -17,6 +17,8 @@ typedef struct {
 
 httpio_t *httpio_init();
 
+void httpio_use(httpio_t *io, httpio_method_t method, const char *uri, httpio_middleware_t middleware);
+
 void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, httpio_request_handler_t handler);
 
 int httpio_listen(httpio_t *io, const char *ip, int port);

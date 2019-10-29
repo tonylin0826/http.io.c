@@ -19,6 +19,16 @@ typedef map_str_t httpio_query_t;
 typedef enum http_method httpio_method_t;
 typedef enum http_status httpio_status_t;
 
+#define MIDDLEWARE_STATUS(XX)   \
+  XX(0,  NEXT,      NEXT)   \
+  XX(1,  DONE,      DONE)
+
+typedef enum middleware_status {
+#define XX(num, name, string) MIDDLEWARE_STATUS_##name = num,
+    MIDDLEWARE_STATUS(XX)
+#undef XX
+} middleware_status_t;
+
 typedef struct {
     char *uri;
     char *body;
@@ -27,6 +37,9 @@ typedef struct {
     httpio_header_t headers;
     httpio_param_t params;
     httpio_query_t queries;
+
+    // tmp
+    bool is_responsed;
 
     // uv data
     uv_stream_t *uv_client;
@@ -44,6 +57,8 @@ typedef struct {
 } httpio_response_t;
 
 typedef void (*httpio_request_handler_t)(httpio_request_t *);
+
+typedef middleware_status_t (*httpio_middleware_t)(httpio_request_t *);
 
 typedef struct {
     uv_stream_t *client;

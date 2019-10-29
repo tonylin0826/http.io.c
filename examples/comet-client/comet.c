@@ -5,12 +5,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <uv.h>
-#include "../src/httpio.h"
+#include "../../src/httpio.h"
 
 typedef map_t(httpio_request_t*) http_request_map_t;
 
 http_request_map_t request_map;
-
 char *pub_data = NULL;
 
 void on_sub_get_timeout(uv_timer_t *handle) {

@@ -30,7 +30,8 @@ bool is_node_match_part(void *node, void *uri_part) {
     return strcmp(n->name, u) == 0;
 }
 
-uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_request_t *req) {
+
+bool search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_request_t *req, list_t *nodes) {
     list_t *current = tree->roots;
 
     uri_tree_node_t *leaf = NULL;
@@ -39,15 +40,16 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_
     char part[256] = {0};
     for (int i = 1, c = 0; i < len && uri[i] != '?'; i++) {
         if (uri[i] == '/') {
-//            printf("part: [%s]\n", part);
+            printf("part: [%s]\n", part);
 
             list_node_t *node = search_in_list(current, part, is_node_match_part);
 
             if (!node) {
-                return NULL;
+                return false;
             }
 
             leaf = (uri_tree_node_t *) node->data;
+            append_to_list(nodes, leaf);
 
             map_set(&req->params, leaf->name, strdup(part));
 
@@ -66,15 +68,12 @@ uri_tree_node_t *search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_
         list_node_t *node = search_in_list(current, part, is_node_match_part);
 
         if (!node) {
-            return NULL;
+            return false;
         }
 
         leaf = (uri_tree_node_t *) node->data;
+        append_to_list(nodes, leaf);
     }
 
-    if (!leaf) {
-        return NULL;
-    }
-
-    return leaf;
+    return leaf != NULL;
 }

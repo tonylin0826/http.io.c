@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 #include <uv.h>
 
 typedef struct {
@@ -235,8 +236,7 @@ void uv_write_str(uv_stream_t *uv_client, char *str) {
     uv_write(req, uv_client, &wrbuf, 1, on_write);
 }
 
-void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t cb) {
-
+uri_tree_node_t *find_uri_tree_leaf(uri_tree_t *tree, const char *uri) {
     list_t *current = tree->roots;
 
     uri_tree_node_t *leaf = NULL;
@@ -287,12 +287,29 @@ void parse_uri_path(uri_tree_t *tree, const char *uri, httpio_request_handler_t 
         }
     }
 
+    return leaf;
+}
+
+void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_handler_t cb) {
+    uri_tree_node_t *leaf = find_uri_tree_leaf(tree, uri);
+
     if (!leaf) {
         printf("ERROR failed to parse URI");
         return;
     }
 
     leaf->cb = cb;
+}
+
+void register_middleware(uri_tree_t *tree, const char *uri, httpio_middleware_t mw) {
+    uri_tree_node_t *leaf = find_uri_tree_leaf(tree, uri);
+
+    if (!leaf) {
+        printf("ERROR failed to parse URI");
+        return;
+    }
+
+    append_to_list(&leaf->middlewares, mw);
 }
 
 void timeout(uv_timer_t *handle) {
@@ -318,13 +335,21 @@ httpio_t *httpio_init() {
     return io;
 }
 
+void httpio_use(httpio_t *io, httpio_method_t method, const char *uri, httpio_middleware_t middleware) {
+    if (method > HTTP_TRACE) {
+        return;
+    }
+
+    register_middleware(io->uri_tree[method], uri, middleware);
+}
+
 void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, httpio_request_handler_t handler) {
 //    map_set(&io->request_handler_maps[method], uri, handler);
     if (method > HTTP_TRACE) {
         return;
     }
 
-    parse_uri_path(io->uri_tree[method], uri, handler);
+    register_request_handler(io->uri_tree[method], uri, handler);
 }
 
 int httpio_listen(httpio_t *io, const char *ip, int port) {
@@ -373,6 +398,8 @@ void httpio_free_request(httpio_request_t **req) {
     free((*req)->uri);
     free((*req)->body);
 
+    (*req)->tmp_body_finger = NULL;
+
     const char *key;
     map_iter_t iter = map_iter(&(*req)->headers);
 
@@ -420,6 +447,8 @@ void httpio_free_client_info(httpio_client_info_t **info_to_free) {
 }
 
 void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *response) {
+    origin_request->is_responsed = true;
+
     // convert response to text;
     size_t content_len = 0;
     if (response->body) {
@@ -455,13 +484,14 @@ void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *
     uv_write_str(origin_request->uv_client, "\r\n");
 
     uv_write_str(origin_request->uv_client, response->body);
-
 }
 
 void httpio_destroy(httpio_t **io_to_free) {
     httpio_t *io = *io_to_free;
 
-    uv_close((uv_handle_t *) &io->uv_server, (uv_close_cb) free);
+//    uv_close((uv_handle_t *) &io->uv_server, (uv_close_cb) free);
+
+    uv_stop(uv_default_loop());
 
     free(io);
 }
@@ -479,20 +509,49 @@ void route(uv_stream_t *client, httpio_request_t *request) {
     request->uv_client = client;
 
     if (request->method > HTTP_TRACE) {
-        printf("INVALID Method\n");
+        fprintf(stderr, "Method [%s] not supported\n", http_method_str(request->method));
         on_method_not_allowed(request);
         return;
     }
 
-    uri_tree_node_t *node = search_uri_tree_node(io->uri_tree[request->method], request->uri, request);
+    list_t nodes;
+    nodes.head = NULL;
+    nodes.current = NULL;
 
-    if (!node) {
-        printf("PATH Not found\n");
+    if (!search_uri_tree_node(io->uri_tree[request->method], request->uri, request, &nodes)) {
+        fprintf(stderr, "Url [%s] not found\n", request->uri);
         on_not_found(request);
         return;
     }
 
-    node->cb(request);
+    list_node_t *c = nodes.head;
+
+    while (c) {
+
+        uri_tree_node_t *node = (uri_tree_node_t *) c->data;
+        list_node_t *mwc = node->middlewares.head;
+
+        while (mwc) {
+
+            if (((httpio_middleware_t )mwc->data)(request) != MIDDLEWARE_STATUS_NEXT) {
+                goto END;
+            }
+
+            mwc = mwc->next;
+        }
+
+        c = c->next;
+    }
+
+    ((uri_tree_node_t *) nodes.current->data)->cb(request);
+
+    END:
+    while (nodes.head) {
+        c = nodes.head;
+        nodes.head = nodes.head->next;
+        free(c);
+    }
+
 }
 
 void on_write(uv_write_t *req, int status) {
