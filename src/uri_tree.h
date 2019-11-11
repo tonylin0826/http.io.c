@@ -8,27 +8,21 @@
 #include "list.h"
 #include "httpio_types.h"
 
-typedef struct uri_tree_node {
-    char *name;
-    httpio_request_handler_t cb;
+struct uri_node;
 
+typedef map_t(struct uri_node*) httpio_node_map_t;
+
+typedef struct uri_node {
+    char *name;
+
+    httpio_request_handler_t cb;
     list_t middlewares;
 
-    list_t *children;
-} uri_tree_node_t;
+    httpio_node_map_t children;
+} uri_node_t;
 
 typedef struct uri_tree {
-    list_t *roots;
+    httpio_node_map_t roots;
 } uri_tree_t;
-
-typedef void (*on_node_found_cb_t)(uri_tree_node_t *);
-
-uri_tree_t *new_uri_tree();
-
-uri_tree_node_t *new_uri_tree_node(char *name, httpio_request_handler_t cb);
-
-bool is_node_match_part(void *node, void *uri_part);
-
-bool search_uri_tree_node(uri_tree_t *tree, const char *uri, httpio_request_t *req, list_t *nodes);
 
 #endif //HTTP_IO_C_URI_TREE_H

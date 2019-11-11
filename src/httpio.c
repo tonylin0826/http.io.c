@@ -236,80 +236,94 @@ void uv_write_str(uv_stream_t *uv_client, char *str) {
     uv_write(req, uv_client, &wrbuf, 1, on_write);
 }
 
-uri_tree_node_t *find_uri_tree_leaf(uri_tree_t *tree, const char *uri) {
-    list_t *current = tree->roots;
-
-    uri_tree_node_t *leaf = NULL;
-
+void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_handler_t cb) {
+    httpio_node_map_t *roots = &tree->roots;
+    uri_node_t **node = NULL;
     int len = (int) strlen(uri);
-    char part[256] = {0};
-    for (int i = 1, c = 0; i < len && uri[i] != '?'; i++) {
+    char buf[256] = {0};
+    for (int i = 0, c = 0; i < len && uri[i] != '?'; i++) {
         if (uri[i] == '/') {
-            list_node_t *node = search_in_list(current, part, is_node_match_part);
+            node = map_get(roots, buf);
 
-//            printf("%p => %s\n", node, part);
+            if (node == NULL) {
+                uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
+                tmp->name = strdup(buf);
+                map_init(&tmp->children);
 
-            if (node) {
-                current = ((uri_tree_node_t *) node->data)->children;
-                leaf = ((uri_tree_node_t *) node->data);
+                map_set(roots, buf, tmp);
 
-//                printf("found %s\n", leaf->name);
-            } else {
-                leaf = new_uri_tree_node(strdup(part), NULL);
-                append_to_list(current, leaf);
-
-//                printf("create %s\n", leaf->name);
+                node = &tmp;
             }
 
-            memset(part, 0, c);
+            roots = &(*node)->children;
+            memset(buf, 0, c);
             c = 0;
-
-            current = leaf->children;
         } else {
-            part[c++] = uri[i];
+            buf[c++] = uri[i];
         }
     }
 
-    if (part[0] != 0) {
+    if (buf[0] != 0) {
+       node = map_get(roots, buf);
 
-        list_node_t *node = search_in_list(current, part, is_node_match_part);
-//        printf("%p => %s\n", node, part);
+        if (node == NULL) {
+            uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
+            tmp->name = strdup(buf);
+            map_init(&tmp->children);
 
-        if (node) {
-            leaf = ((uri_tree_node_t *) node->data);
+            map_set(roots, buf, tmp);
 
-//            printf("found %s\n", leaf->name);
-        } else {
-            leaf = new_uri_tree_node(strdup(part), NULL);
-            append_to_list(current, leaf);
-
-//            printf("create %s\n", leaf->name);
+            node = &tmp;
         }
     }
 
-    return leaf;
-}
-
-void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_handler_t cb) {
-    uri_tree_node_t *leaf = find_uri_tree_leaf(tree, uri);
-
-    if (!leaf) {
-        printf("ERROR failed to parse URI");
-        return;
-    }
-
-    leaf->cb = cb;
+    assert((*node) != NULL);
+    (*node)->cb = cb;
 }
 
 void register_middleware(uri_tree_t *tree, const char *uri, httpio_middleware_t mw) {
-    uri_tree_node_t *leaf = find_uri_tree_leaf(tree, uri);
+    httpio_node_map_t *roots = &tree->roots;
+    uri_node_t **node = NULL;
+    int len = (int) strlen(uri);
+    char buf[256] = {0};
+    for (int i = 0, c = 0; i < len && uri[i] != '?'; i++) {
+        if (uri[i] == '/') {
+            node = map_get(roots, buf);
 
-    if (!leaf) {
-        printf("ERROR failed to parse URI");
-        return;
+            if (node == NULL) {
+                uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
+                tmp->name = strdup(buf);
+                map_init(&tmp->children);
+
+                map_set(roots, buf, tmp);
+
+                node = &tmp;
+            }
+
+            roots = &(*node)->children;
+            memset(buf, 0, c);
+            c = 0;
+        } else {
+            buf[c++] = uri[i];
+        }
     }
 
-    append_to_list(&leaf->middlewares, mw);
+    if (buf[0] != 0) {
+        node = map_get(roots, buf);
+
+        if (node == NULL) {
+            uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
+            tmp->name = strdup(buf);
+            map_init(&tmp->children);
+
+            map_set(roots, buf, tmp);
+
+            node = &tmp;
+        }
+    }
+
+    assert((*node) != NULL);
+    append_to_list(&(*node)->middlewares, mw);
 }
 
 void timeout(uv_timer_t *handle) {
@@ -328,8 +342,8 @@ httpio_t *httpio_init() {
 
     uv_tcp_init(uv_default_loop(), &io->uv_server);
 
-    for (int i = 0; i <= HTTP_TRACE; i++) {
-        io->uri_tree[i] = new_uri_tree();
+    for (int i = 0; i < HTTP_COPY; i++) {
+        map_init(&io->uri_tree[i].roots);
     }
 
     return io;
@@ -340,7 +354,7 @@ void httpio_use(httpio_t *io, httpio_method_t method, const char *uri, httpio_mi
         return;
     }
 
-    register_middleware(io->uri_tree[method], uri, middleware);
+    register_middleware(&io->uri_tree[method], uri, middleware);
 }
 
 void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, httpio_request_handler_t handler) {
@@ -349,7 +363,7 @@ void httpio_add_route(httpio_t *io, httpio_method_t method, const char *uri, htt
         return;
     }
 
-    register_request_handler(io->uri_tree[method], uri, handler);
+    register_request_handler(&io->uri_tree[method], uri, handler);
 }
 
 int httpio_listen(httpio_t *io, const char *ip, int port) {
@@ -486,12 +500,31 @@ void httpio_write_response(httpio_request_t *origin_request, httpio_response_t *
     uv_write_str(origin_request->uv_client, response->body);
 }
 
+void free_uri_map(httpio_node_map_t *roots) {
+    const char *key;
+    map_iter_t iter = map_iter(roots);
+
+    while ((key = map_next(roots, &iter))) {
+        uri_node_t **node = map_get(roots, key);
+
+        free((*node)->name);
+
+        free_uri_map(&(*node)->children);
+    }
+
+    map_deinit(roots);
+}
+
 void httpio_destroy(httpio_t **io_to_free) {
     httpio_t *io = *io_to_free;
 
 //    uv_close((uv_handle_t *) &io->uv_server, (uv_close_cb) free);
 
     uv_stop(uv_default_loop());
+
+    for (int i = 0; i < 8; i++) {
+        free_uri_map(&io->uri_tree[i].roots);
+    }
 
     free(io);
 }
@@ -514,44 +547,64 @@ void route(uv_stream_t *client, httpio_request_t *request) {
         return;
     }
 
-    list_t nodes;
-    nodes.head = NULL;
-    nodes.current = NULL;
+    httpio_node_map_t *roots = &io->uri_tree[request->method].roots;
+    uri_node_t **node = NULL;
+    int len = (int) strlen(request->uri);
+    char buf[256] = {0};
+    for (int i = 0, c = 0; i < len && request->uri[i] != '?'; i++) {
+        if (request->uri[i] == '/') {
+            node = map_get(roots, buf);
 
-    if (!search_uri_tree_node(io->uri_tree[request->method], request->uri, request, &nodes)) {
-        fprintf(stderr, "Url [%s] not found\n", request->uri);
-        on_not_found(request);
-        return;
-    }
-
-    list_node_t *c = nodes.head;
-
-    while (c) {
-
-        uri_tree_node_t *node = (uri_tree_node_t *) c->data;
-        list_node_t *mwc = node->middlewares.head;
-
-        while (mwc) {
-
-            if (((httpio_middleware_t )mwc->data)(request) != MIDDLEWARE_STATUS_NEXT) {
-                goto END;
+            if (node == NULL) {
+                on_not_found(request);
+                return;
             }
 
-            mwc = mwc->next;
+            list_node_t *cc = (*node)->middlewares.head;
+            while (cc != NULL) {
+                httpio_middleware_t mw = cc->data;
+
+                if (mw(request) == MIDDLEWARE_STATUS_DONE) {
+                    assert(request->is_responsed != true);
+                    return;
+                }
+
+                cc = cc->next;
+            }
+
+            roots = &(*node)->children;
+
+            memset(buf, 0, c);
+            c = 0;
+        } else {
+            buf[c++] = request->uri[i];
+        }
+    }
+
+    if (buf[0] != 0) {
+        node = map_get(roots, buf);
+
+        if (node == NULL) {
+            on_not_found(request);
+            return;
+        }
+    }
+
+    assert(node != NULL);
+
+    list_node_t *c = (*node)->middlewares.head;
+    while (c != NULL) {
+        httpio_middleware_t mw = c->data;
+
+        if (mw(request) == MIDDLEWARE_STATUS_DONE) {
+            assert(request->is_responsed != true);
+            return;
         }
 
         c = c->next;
     }
 
-    ((uri_tree_node_t *) nodes.current->data)->cb(request);
-
-    END:
-    while (nodes.head) {
-        c = nodes.head;
-        nodes.head = nodes.head->next;
-        free(c);
-    }
-
+    (*node)->cb(request);
 }
 
 void on_write(uv_write_t *req, int status) {

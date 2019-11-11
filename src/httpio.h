@@ -12,7 +12,7 @@ typedef void (*httpio_timeout_cb_t)(void *data);
 
 typedef struct {
     uv_tcp_t uv_server;
-    uri_tree_t *uri_tree[8];
+    uri_tree_t uri_tree[8];
 } httpio_t;
 
 httpio_t *httpio_init();
