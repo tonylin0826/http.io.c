@@ -19,7 +19,7 @@ void close_client(uv_handle_t *handle) {
 
     free(handle);
 
-    uv_close((uv_handle_t *) &io->uv_server, close_server);
+//    uv_close((uv_handle_t *) &io->uv_server, close_server);
 }
 
 void on_asd_sss_timeout(void *data) {
