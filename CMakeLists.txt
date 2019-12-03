@@ -17,7 +17,7 @@ add_library(http.io SHARED
         src/list.h)
 
 set_target_properties(http.io PROPERTIES
-        PUBLIC_HEADER "src/httpio.h;src/list.h;src/uri_tree.h;src/map.h;src/httpio.h;src/httpio_types.h")
+        PUBLIC_HEADER "src/httpio.h;src/list.h;src/uri_tree.h;src/map.h;src/httpio.h;src/httpio_types.h;src/http_parser.h")
 
 target_link_libraries(
         http.io
