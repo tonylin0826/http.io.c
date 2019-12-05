@@ -258,7 +258,6 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
                 roots = &((*node)->children);
             }
 
-            roots = &((*node)->children);
             memset(buf, 0, c);
             c = 0;
         } else {
