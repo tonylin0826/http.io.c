@@ -253,6 +253,9 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
                 map_set(roots, buf, tmp);
 
                 node = &tmp;
+                roots = &((*node)->children);
+            } else {
+                roots = &((*node)->children);
             }
 
             roots = &((*node)->children);
