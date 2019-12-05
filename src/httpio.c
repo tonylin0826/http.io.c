@@ -245,9 +245,8 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
         if (uri[i] == '/') {
             node = map_get(roots, buf);
 
-            uri_node_t *tmp = NULL;
             if (node == NULL) {
-                tmp = calloc(1, sizeof(uri_node_t));
+                uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
                 tmp->name = strdup(buf);
                 map_init(&tmp->children);
 
@@ -264,23 +263,22 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
         }
     }
 
-    uri_node_t *tmp2 = NULL;
     if (buf[0] != 0) {
        node = map_get(roots, buf);
 
         if (node == NULL) {
-            tmp2 = calloc(1, sizeof(uri_node_t));
-            tmp2->name = strdup(buf);
-            map_init(&tmp2->children);
+            uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
+            tmp->name = strdup(buf);
+            map_init(&tmp->children);
 
-            map_set(roots, buf, tmp2);
+            map_set(roots, buf, tmp);
 
-            node = &tmp2;
+            node = &tmp;
+            (*node)->cb = cb;
+        } else {
+            (*node)->cb = cb;
         }
     }
-
-    assert((*node) != NULL);
-    (*node)->cb = cb;
 }
 
 void register_middleware(uri_tree_t *tree, const char *uri, httpio_middleware_t mw) {
