@@ -247,7 +247,7 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
 
             if (node == NULL) {
                 uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
-                tmp->name = strdup(buf);
+                tmp->name = buf[0] == 0 ? strdup("") : strdup(buf);
                 map_init(&tmp->children);
 
                 map_set(roots, buf, tmp);
@@ -272,7 +272,7 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
 
         if (node == NULL) {
             uri_node_t *tmp = calloc(1, sizeof(uri_node_t));
-            tmp->name = strdup(buf);
+            tmp->name = buf[0] == 0 ? strdup("") : strdup(buf);
             map_init(&tmp->children);
 
             map_set(roots, buf, tmp);
