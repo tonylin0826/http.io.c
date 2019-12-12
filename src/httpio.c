@@ -254,6 +254,8 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
 
                 node = &tmp;
                 roots = &((*node)->children);
+
+//                printf("add [%s] node \n", buf);
             } else {
                 roots = &((*node)->children);
             }
@@ -277,9 +279,14 @@ void register_request_handler(uri_tree_t *tree, const char *uri, httpio_request_
 
             node = &tmp;
             (*node)->cb = cb;
+            printf("add cb to [%s]\n", (*node)->name);
         } else {
             (*node)->cb = cb;
+            printf("add cb to [%s]\n", (*node)->name);
         }
+    } else if (node != NULL){
+        (*node)->cb = cb;
+        printf("add cb to [%s]\n", (*node)->name);
     }
 }
 
@@ -539,7 +546,7 @@ void alloc_buffer(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 void route(uv_stream_t *client, httpio_request_t *request) {
     httpio_client_info_t *info = (httpio_client_info_t *) client->data;
     httpio_t *io = (httpio_t *) info->data;
-//    printf("routing to %s - [%s]\n", http_method_str(request->method), request->uri);
+    printf("routing to %s - [%s]\n", http_method_str(request->method), request->uri);
 
     request->uv_client = client;
 
